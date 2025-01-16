@@ -1,12 +1,19 @@
-// Flags: --experimental-permission --allow-child-process --allow-fs-read=*
+// Flags: --permission --allow-child-process --allow-fs-read=*
 'use strict';
 
 const common = require('../common');
 common.skipIfWorker();
 const assert = require('assert');
 const childProcess = require('child_process');
+const fs = require('fs');
 
 if (process.argv[2] === 'child') {
+  assert.throws(() => {
+    fs.writeFileSync(__filename, 'should not write');
+  }, common.expectsError({
+    code: 'ERR_ACCESS_DENIED',
+    permission: 'FileSystemWrite',
+  }));
   process.exit(0);
 }
 
@@ -20,7 +27,8 @@ if (process.argv[2] === 'child') {
 {
   // doesNotThrow
   childProcess.spawnSync(process.execPath, ['--version']);
-  childProcess.execSync(process.execPath, ['--version']);
-  childProcess.fork(__filename, ['child']);
+  childProcess.execSync(...common.escapePOSIXShell`"${process.execPath}" --version`);
+  const child = childProcess.fork(__filename, ['child']);
+  child.on('close', common.mustCall());
   childProcess.execFileSync(process.execPath, ['--version']);
 }

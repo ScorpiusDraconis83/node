@@ -1,4 +1,4 @@
-// Flags: --experimental-permission --allow-fs-read=*
+// Flags: --permission --allow-fs-read=*
 'use strict';
 
 const common = require('../common');
@@ -16,7 +16,7 @@ const path = require('path');
   }, common.expectsError({
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
-    resource: path.toNamespacedPath(path.resolve('./secret.txt')),
+    resource: path.toNamespacedPath('./secret.txt'),
   }));
 }
 

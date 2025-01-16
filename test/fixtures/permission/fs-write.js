@@ -11,11 +11,10 @@ const regularFolder = process.env.ALLOWEDFOLDER;
 const regularFile = process.env.ALLOWEDFILE;
 const blockedFolder = process.env.BLOCKEDFOLDER;
 const blockedFile = process.env.BLOCKEDFILE;
+const bufferBlockedFile = Buffer.from(process.env.BLOCKEDFILE);
 const blockedFileURL = require('url').pathToFileURL(process.env.BLOCKEDFILE);
 const relativeProtectedFile = process.env.RELATIVEBLOCKEDFILE;
 const relativeProtectedFolder = process.env.RELATIVEBLOCKEDFOLDER;
-const absoluteProtectedFile = path.resolve(relativeProtectedFile);
-const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
 
 {
   assert.ok(!process.permission.has('fs.write', blockedFolder));
@@ -36,6 +35,11 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
     permission: 'FileSystemWrite',
     resource: path.toNamespacedPath(blockedFile),
   }));
+  fs.writeFile(bufferBlockedFile, 'example', common.expectsError({
+    code: 'ERR_ACCESS_DENIED',
+    permission: 'FileSystemWrite',
+    resource: path.toNamespacedPath(blockedFile),
+  }));
   assert.throws(() => {
     fs.writeFileSync(blockedFileURL, 'example');
   }, {
@@ -48,7 +52,7 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
   }, {
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
-    resource: path.toNamespacedPath(absoluteProtectedFile),
+    resource: path.toNamespacedPath(relativeProtectedFile),
   });
 
   assert.throws(() => {
@@ -80,7 +84,7 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
   }, {
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
-    resource: path.toNamespacedPath(absoluteProtectedFile),
+    resource: path.toNamespacedPath(relativeProtectedFile),
   }).then(common.mustCall());
 
   assert.rejects(() => {
@@ -105,6 +109,13 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
     resource: path.toNamespacedPath(blockedFile),
   });
   assert.throws(() => {
+    fs.utimes(bufferBlockedFile, new Date(), new Date(), () => {});
+  }, {
+    code: 'ERR_ACCESS_DENIED',
+    permission: 'FileSystemWrite',
+    resource: path.toNamespacedPath(blockedFile),
+  });
+  assert.throws(() => {
     fs.utimes(blockedFileURL, new Date(), new Date(), () => {});
   }, {
     code: 'ERR_ACCESS_DENIED',
@@ -116,7 +127,7 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
   }, {
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
-    resource: path.toNamespacedPath(absoluteProtectedFile),
+    resource: path.toNamespacedPath(relativeProtectedFile),
   });
 
   assert.throws(() => {
@@ -132,6 +143,13 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
 {
   assert.throws(() => {
     fs.lutimes(blockedFile, new Date(), new Date(), () => {});
+  },{
+    code: 'ERR_ACCESS_DENIED',
+    permission: 'FileSystemWrite',
+    resource: path.toNamespacedPath(blockedFile),
+  });
+  assert.throws(() => {
+    fs.lutimes(bufferBlockedFile, new Date(), new Date(), () => {});
   },{
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
@@ -164,7 +182,7 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
   },{
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
-    resource: path.toNamespacedPath(path.join(absoluteProtectedFolder, 'any-folder')),
+    resource: path.toNamespacedPath(path.join(relativeProtectedFolder, 'any-folder')),
   });
 }
 
@@ -195,6 +213,11 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
     permission: 'FileSystemWrite',
     resource: path.toNamespacedPath(blockedFile),
   }));
+  fs.rename(bufferBlockedFile, path.join(blockedFile, 'renamed'), common.expectsError({
+    code: 'ERR_ACCESS_DENIED',
+    permission: 'FileSystemWrite',
+    resource: path.toNamespacedPath(blockedFile),
+  }));
   assert.throws(() => {
     fs.renameSync(blockedFileURL, path.join(blockedFile, 'renamed'));
   }, {
@@ -207,7 +230,7 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
   },{
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
-    resource: path.toNamespacedPath(absoluteProtectedFile),
+    resource: path.toNamespacedPath(relativeProtectedFile),
   });
   assert.throws(() => {
     fs.renameSync(blockedFile, path.join(regularFolder, 'renamed'));
@@ -240,12 +263,17 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
   },{
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
-    resource: path.toNamespacedPath(path.join(absoluteProtectedFolder, 'any-file')),
+    resource: path.toNamespacedPath(path.join(relativeProtectedFolder, 'any-file')),
   });
   fs.copyFile(regularFile, path.join(relativeProtectedFolder, 'any-file'), common.expectsError({
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
-    resource: path.toNamespacedPath(path.join(absoluteProtectedFolder, 'any-file')),
+    resource: path.toNamespacedPath(path.join(relativeProtectedFolder, 'any-file')),
+  }));
+  fs.copyFile(bufferBlockedFile, path.join(relativeProtectedFolder, 'any-file'), common.expectsError({
+    code: 'ERR_ACCESS_DENIED',
+    permission: 'FileSystemWrite',
+    resource: path.toNamespacedPath(path.join(relativeProtectedFolder, 'any-file')),
   }));
 }
 
@@ -263,7 +291,7 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
   },{
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
-    resource: path.toNamespacedPath(path.join(absoluteProtectedFolder, 'any-file')),
+    resource: path.toNamespacedPath(path.join(relativeProtectedFolder, 'any-file')),
   });
 }
 
@@ -281,7 +309,7 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
   },{
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
-    resource: path.toNamespacedPath(absoluteProtectedFolder),
+    resource: path.toNamespacedPath(relativeProtectedFolder),
   });
 }
 
@@ -294,6 +322,10 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
     permission: 'FileSystemWrite',
   }));
   fs.open(blockedFileURL, fs.constants.O_RDWR | 0x10000000, common.expectsError({
+    code: 'ERR_ACCESS_DENIED',
+    permission: 'FileSystemWrite',
+  }));
+  fs.open(bufferBlockedFile, fs.constants.O_RDWR | 0x10000000, common.expectsError({
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
   }));
@@ -325,6 +357,12 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
     permission: 'FileSystemWrite',
   });
   assert.throws(() => {
+    fs.chmod(bufferBlockedFile, 0o755, common.mustNotCall());
+  }, {
+    code: 'ERR_ACCESS_DENIED',
+    permission: 'FileSystemWrite',
+  });
+  assert.throws(() => {
     fs.chmod(blockedFileURL, 0o755, common.mustNotCall());
   }, {
     code: 'ERR_ACCESS_DENIED',
@@ -340,7 +378,7 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
 
 // fs.lchmod
 {
-  if (common.isOSX) {
+  if (common.isMacOS) {
     fs.lchmod(blockedFile, 0o755, common.expectsError({
       code: 'ERR_ACCESS_DENIED',
       permission: 'FileSystemWrite',
@@ -357,6 +395,10 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
 // fs.appendFile
 {
   fs.appendFile(blockedFile, 'new data', common.expectsError({
+    code: 'ERR_ACCESS_DENIED',
+    permission: 'FileSystemWrite',
+  }));
+  fs.appendFile(bufferBlockedFile, 'new data', common.expectsError({
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
   }));
@@ -380,6 +422,10 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
   }));
+  fs.chown(bufferBlockedFile, 1541, 999, common.expectsError({
+    code: 'ERR_ACCESS_DENIED',
+    permission: 'FileSystemWrite',
+  }));
   assert.throws(() => {
     fs.chownSync(blockedFileURL, 1541, 999);
   }, {
@@ -398,6 +444,10 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
 // fs.lchown
 {
   fs.lchown(blockedFile, 1541, 999, common.expectsError({
+    code: 'ERR_ACCESS_DENIED',
+    permission: 'FileSystemWrite',
+  }));
+  fs.lchown(bufferBlockedFile, 1541, 999, common.expectsError({
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
   }));
@@ -428,6 +478,10 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
   }));
+  fs.link(bufferBlockedFile, path.join(blockedFolder, '/linked'), common.expectsError({
+    code: 'ERR_ACCESS_DENIED',
+    permission: 'FileSystemWrite',
+  }));
   assert.throws(() => {
     fs.linkSync(blockedFileURL, path.join(blockedFolder, '/linked'));
   }, {
@@ -452,6 +506,13 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
     permission: 'FileSystemWrite',
     resource: path.toNamespacedPath(blockedFile),
   });
+  assert.throws(() => {
+    fs.unlinkSync(bufferBlockedFile);
+  }, {
+    code: 'ERR_ACCESS_DENIED',
+    permission: 'FileSystemWrite',
+    resource: path.toNamespacedPath(blockedFile),
+  });
   fs.unlink(blockedFile, common.expectsError({
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
@@ -463,5 +524,33 @@ const absoluteProtectedFolder = path.resolve(relativeProtectedFolder);
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemWrite',
     resource: path.toNamespacedPath(blockedFile),
+  });
+}
+
+// fs.fchown with read-only fd
+{
+  assert.throws(() => {
+    // blocked file is allowed to read
+    const fd = fs.openSync(blockedFile, 'r');
+    fs.fchmod(fd, 777, common.expectsError({
+      code: 'ERR_ACCESS_DENIED',
+    }));
+    fs.fchmodSync(fd, 777);
+  }, {
+    code: 'ERR_ACCESS_DENIED',
+  });
+}
+
+// fs.fchmod with read-only fd
+{
+  assert.throws(() => {
+    // blocked file is allowed to read
+    const fd = fs.openSync(blockedFile, 'r');
+    fs.fchown(fd, 999, 999, common.expectsError({
+      code: 'ERR_ACCESS_DENIED',
+    }));
+    fs.fchownSync(fd, 999, 999);
+  }, {
+    code: 'ERR_ACCESS_DENIED',
   });
 }

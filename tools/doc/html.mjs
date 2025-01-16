@@ -394,8 +394,8 @@ function versionSort(a, b) {
   b = minVersion(b).trim();
   let i = 0; // Common prefix length.
   while (i < a.length && i < b.length && a[i] === b[i]) i++;
-  a = a.substr(i);
-  b = b.substr(i);
+  a = a.substring(i);
+  b = b.substring(i);
   return +b.match(numberRe)[0] - +a.match(numberRe)[0];
 }
 
@@ -428,8 +428,8 @@ export function buildToc({ filename, apilinks }) {
       const isDeprecationHeading =
         DEPRECATION_HEADING_PATTERN.test(headingText);
       if (isDeprecationHeading) {
-        if (!node.data) node.data = {};
-        if (!node.data.hProperties) node.data.hProperties = {};
+        node.data ||= {};
+        node.data.hProperties ||= {};
         node.data.hProperties.id =
           headingText.substring(0, headingText.indexOf(':'));
       }

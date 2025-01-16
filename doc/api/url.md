@@ -600,6 +600,12 @@ value returned is equivalent to that of [`url.href`][] and [`url.toJSON()`][].
 
 #### `url.toJSON()`
 
+<!-- YAML
+added:
+  - v7.7.0
+  - v6.13.0
+-->
+
 * Returns: {string}
 
 The `toJSON()` method on the `URL` object returns the serialized URL. The
@@ -690,6 +696,23 @@ const isValid = URL.canParse('/foo', 'https://example.org/'); // true
 
 const isNotValid = URL.canParse('/foo'); // false
 ```
+
+#### `URL.parse(input[, base])`
+
+<!-- YAML
+added: v22.1.0
+-->
+
+* `input` {string} The absolute or relative input URL to parse. If `input`
+  is relative, then `base` is required. If `input` is absolute, the `base`
+  is ignored. If `input` is not a string, it is [converted to a string][] first.
+* `base` {string} The base URL to resolve against if the `input` is not
+  absolute. If `base` is not a string, it is [converted to a string][] first.
+* Returns: {URL|null}
+
+Parses a string as a URL. If `base` is provided, it will be used as the base
+URL for the purpose of resolving non-absolute `input` URLs. Returns `null`
+if `input` is not a valid.
 
 ### Class: `URLSearchParams`
 
@@ -1156,7 +1179,9 @@ console.log(url.domainToUnicode('xn--iñvalid.com'));
 <!-- YAML
 added: v10.12.0
 changes:
-  - version: REPLACEME
+  - version:
+    - v22.1.0
+    - v20.13.0
     pr-url: https://github.com/nodejs/node/pull/52509
     description: The `options` argument can now be used to
                  determine how to parse the `path` argument.
@@ -1266,7 +1291,9 @@ console.log(url.format(myURL, { fragment: false, unicode: true, auth: false }));
 <!-- YAML
 added: v10.12.0
 changes:
-  - version: REPLACEME
+  - version:
+    - v22.1.0
+    - v20.13.0
     pr-url: https://github.com/nodejs/node/pull/52509
     description: The `options` argument can now be used to
                  determine how to return the `path` value.
