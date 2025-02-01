@@ -258,6 +258,7 @@ V8_NOINLINE V8_EXPORT_PRIVATE bool IsSubtypeOfImpl(
   switch (subtype.kind()) {
     case kI32:
     case kI64:
+    case kF16:
     case kF32:
     case kF64:
     case kS128:
@@ -486,7 +487,7 @@ HeapType::Representation CommonAncestor(uint32_t type_index1,
   }
 }
 
-// Returns the least common ancestor of a abstract HeapType {heap1}, and
+// Returns the least common ancestor of an abstract HeapType {heap1}, and
 // another HeapType {heap2}.
 HeapType::Representation CommonAncestorWithAbstract(HeapType heap1,
                                                     HeapType heap2,

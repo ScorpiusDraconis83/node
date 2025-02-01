@@ -8,6 +8,7 @@
 #include <atomic>
 #include <memory>
 #include <numeric>
+#include <optional>
 
 #include "include/v8-internal.h"
 #include "src/base/logging.h"
@@ -89,7 +90,8 @@ class SemiSpace final : public Space {
     // We cannot expand if we reached the target capacity. Note
     // that we need to account for the next page already for this check as we
     // could potentially fill the whole page after advancing.
-    if (next_page == nullptr || (current_capacity_ == target_capacity_)) {
+    if (next_page == nullptr || ((current_capacity_ == target_capacity_) &&
+                                 !allow_to_grow_beyond_capacity_)) {
       return false;
     }
     current_page_ = next_page;
@@ -179,11 +181,12 @@ class SemiSpace final : public Space {
   void AddRangeToActiveSystemPages(Address start, Address end);
 
  private:
+  bool AllocateFreshPage();
+
   void RewindPages(int num_pages);
 
-  // Copies the flags into the masked positions on all pages in the space.
-  void FixPagesFlags(MemoryChunk::MainThreadFlags flags,
-                     MemoryChunk::MainThreadFlags mask);
+  // Iterates all pages and properly initializes page flags for this space.
+  void FixPagesFlags();
 
   void IncrementCommittedPhysicalMemory(size_t increment_value);
   void DecrementCommittedPhysicalMemory(size_t decrement_value);
@@ -202,6 +205,8 @@ class SemiSpace final : public Space {
   size_t committed_physical_memory_ = 0;
   SemiSpaceId id_;
   PageMetadata* current_page_ = nullptr;
+
+  bool allow_to_grow_beyond_capacity_ = false;
 
   friend class SemiSpaceNewSpace;
   friend class SemiSpaceObjectIterator;
@@ -263,8 +268,7 @@ class NewSpace : NON_EXPORTED_BASE(public SpaceWithLinearArea) {
 
   virtual Address first_allocatable_address() const = 0;
 
-  virtual void Prologue() {}
-
+  virtual void GarbageCollectionPrologue() {}
   virtual void GarbageCollectionEpilogue() = 0;
 
   virtual bool IsPromotionCandidate(const MutablePageMetadata* page) const = 0;
@@ -317,7 +321,9 @@ class V8_EXPORT_PRIVATE SemiSpaceNewSpace final : public NewSpace {
   // Return the allocatable capacity of a semispace.
   size_t Capacity() const final {
     SLOW_DCHECK(to_space_.target_capacity() == from_space_.target_capacity());
-    return (to_space_.target_capacity() / PageMetadata::kPageSize) *
+    size_t actual_capacity =
+        std::max(to_space_.current_capacity(), to_space_.target_capacity());
+    return (actual_capacity / PageMetadata::kPageSize) *
            MemoryChunkLayout::AllocatableMemoryInDataPage();
   }
 
@@ -435,10 +441,9 @@ class V8_EXPORT_PRIVATE SemiSpaceNewSpace final : public NewSpace {
 
   bool ShouldBePromoted(Address address) const;
 
-  void Prologue() final;
-
   void EvacuatePrologue();
 
+  void GarbageCollectionPrologue() final;
   void GarbageCollectionEpilogue() final;
 
   void ZapUnusedMemory();
@@ -458,7 +463,10 @@ class V8_EXPORT_PRIVATE SemiSpaceNewSpace final : public NewSpace {
   // Reset the allocation pointer to the beginning of the active semispace.
   void ResetCurrentSpace();
 
-  base::Optional<std::pair<Address, Address>> Allocate(
+  std::optional<std::pair<Address, Address>> Allocate(
+      int size_in_bytes, AllocationAlignment alignment);
+
+  std::optional<std::pair<Address, Address>> AllocateOnNewPageBeyondCapacity(
       int size_in_bytes, AllocationAlignment alignment);
 
   // Removes a page from the space. Assumes the page is in the `from_space` semi
@@ -475,19 +483,9 @@ class V8_EXPORT_PRIVATE SemiSpaceNewSpace final : public NewSpace {
 
   void SetAllocationTop(Address top) { allocation_top_ = top; }
 
-  void IncrementAllocationTop(Address new_top) {
-    DCHECK_LE(allocation_top_, new_top);
-    DCHECK_EQ(PageMetadata::FromAllocationAreaAddress(allocation_top_),
-              PageMetadata::FromAllocationAreaAddress(new_top));
-    allocation_top_ = new_top;
-  }
+  V8_INLINE void IncrementAllocationTop(Address new_top);
 
-  void DecrementAllocationTop(Address new_top) {
-    DCHECK_LE(new_top, allocation_top_);
-    DCHECK_EQ(PageMetadata::FromAllocationAreaAddress(allocation_top_),
-              PageMetadata::FromAllocationAreaAddress(new_top));
-    allocation_top_ = new_top;
-  }
+  V8_INLINE void DecrementAllocationTop(Address new_top);
 
   Address allocation_top() const { return allocation_top_; }
 
