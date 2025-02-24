@@ -82,10 +82,11 @@ SingleCopyReadOnlyArtifacts::~SingleCopyReadOnlyArtifacts() {
   // TearDown requires MemoryAllocator which itself is tied to an Isolate.
   shared_read_only_space_->pages_.resize(0);
 
-  for (ReadOnlyPageMetadata* chunk : pages_) {
-    void* chunk_address = reinterpret_cast<void*>(chunk->ChunkAddress());
-    size_t size = RoundUp(chunk->size(), page_allocator_->AllocatePageSize());
-    CHECK(page_allocator_->FreePages(chunk_address, size));
+  for (ReadOnlyPageMetadata* page : pages_) {
+    MemoryChunk* chunk = MemoryChunk::FromAddress(page->ChunkAddress());
+    size_t size = RoundUp(page->size(), page_allocator_->AllocatePageSize());
+    page->~ReadOnlyPageMetadata();
+    CHECK(page_allocator_->FreePages(chunk, size));
   }
 }
 
@@ -307,10 +308,10 @@ void ReadOnlySpace::DetachPagesAndAddToArtifacts(
   DCHECK(ReadOnlyHeap::IsReadOnlySpaceShared());
 
   Heap* heap = ReadOnlySpace::heap();
-  // Without pointer compression in a per-Isolate cage, ReadOnlySpace pages are
+  // Unless using multiple pointer compression cages, ReadOnlySpace pages are
   // directly shared between all heaps and so must be unregistered from their
   // originating allocator.
-  Seal(COMPRESS_POINTERS_IN_ISOLATE_CAGE_BOOL
+  Seal(COMPRESS_POINTERS_IN_MULTIPLE_CAGES_BOOL
            ? SealMode::kDetachFromHeap
            : SealMode::kDetachFromHeapAndUnregisterMemory);
   artifacts->Initialize(heap->isolate(), std::move(pages_), accounting_stats_);
@@ -323,7 +324,11 @@ ReadOnlyPageMetadata::ReadOnlyPageMetadata(Heap* heap, BaseSpace* space,
     : MemoryChunkMetadata(heap, space, chunk_size, area_start, area_end,
                           std::move(reservation)) {
   allocated_bytes_ = 0;
-  Chunk()->SetFlags(MemoryChunk::NEVER_EVACUATE | MemoryChunk::READ_ONLY_HEAP);
+}
+
+MemoryChunk::MainThreadFlags ReadOnlyPageMetadata::InitialFlags() const {
+  return MemoryChunk::NEVER_EVACUATE | MemoryChunk::READ_ONLY_HEAP |
+         MemoryChunk::CONTAINS_ONLY_OLD;
 }
 
 void ReadOnlyPageMetadata::MakeHeaderRelocatable() {
@@ -499,11 +504,11 @@ void ReadOnlySpace::VerifyCounters(Heap* heap) const {
     total_allocated += page->allocated_bytes();
     // The real size can be smaller than the accounted size if array trimming,
     // object slack tracking happened after sweeping.
-    DCHECK_LE(real_allocated, accounting_stats_.AllocatedOnPage(page));
-    DCHECK_EQ(page->allocated_bytes(), accounting_stats_.AllocatedOnPage(page));
+    CHECK_LE(real_allocated, accounting_stats_.AllocatedOnPage(page));
+    CHECK_EQ(page->allocated_bytes(), accounting_stats_.AllocatedOnPage(page));
   }
-  DCHECK_EQ(total_capacity, accounting_stats_.Capacity());
-  DCHECK_EQ(total_allocated, accounting_stats_.Size());
+  CHECK_EQ(total_capacity, accounting_stats_.Capacity());
+  CHECK_EQ(total_allocated, accounting_stats_.Size());
 }
 #endif  // DEBUG
 #endif  // VERIFY_HEAP
@@ -595,7 +600,6 @@ Tagged<HeapObject> ReadOnlySpace::TryAllocateLinearlyAligned(
 
 AllocationResult ReadOnlySpace::AllocateRawAligned(
     int size_in_bytes, AllocationAlignment alignment) {
-  DCHECK(!v8_flags.enable_third_party_heap);
   DCHECK(!IsDetached());
   size_in_bytes = ALIGN_TO_ALLOCATION_ALIGNMENT(size_in_bytes);
   int allocation_size = size_in_bytes;
@@ -676,7 +680,6 @@ size_t ReadOnlyPageMetadata::ShrinkToHighWaterMark() {
 }
 
 void ReadOnlySpace::ShrinkPages() {
-  if (V8_ENABLE_THIRD_PARTY_HEAP_BOOL) return;
   MemoryChunkMetadata::UpdateHighWaterMark(top_);
   heap()->CreateFillerObjectAt(top_, static_cast<int>(limit_ - top_));
 
@@ -693,11 +696,11 @@ void ReadOnlySpace::ShrinkPages() {
 SharedReadOnlySpace::SharedReadOnlySpace(
     Heap* heap, PointerCompressedReadOnlyArtifacts* artifacts)
     : SharedReadOnlySpace(heap) {
-  // This constructor should only be used when RO_SPACE is shared with pointer
-  // compression in a per-Isolate cage.
+  // This constructor should only be used when RO_SPACE is shared *and* when
+  // multiple compressed pointer cages are enabled.
   DCHECK(V8_SHARED_RO_HEAP_BOOL);
   DCHECK(COMPRESS_POINTERS_BOOL);
-  DCHECK(COMPRESS_POINTERS_IN_ISOLATE_CAGE_BOOL);
+  DCHECK(COMPRESS_POINTERS_IN_MULTIPLE_CAGES_BOOL);
   DCHECK(ReadOnlyHeap::IsReadOnlySpaceShared());
   DCHECK(!artifacts->pages().empty());
 
@@ -716,7 +719,7 @@ SharedReadOnlySpace::SharedReadOnlySpace(
     : SharedReadOnlySpace(heap) {
   DCHECK(V8_SHARED_RO_HEAP_BOOL);
   DCHECK(COMPRESS_POINTERS_BOOL);
-  DCHECK(COMPRESS_POINTERS_IN_ISOLATE_CAGE_BOOL);
+  DCHECK(COMPRESS_POINTERS_IN_MULTIPLE_CAGES_BOOL);
   DCHECK(ReadOnlyHeap::IsReadOnlySpaceShared());
 
   accounting_stats_ = std::move(new_stats);
@@ -727,10 +730,11 @@ SharedReadOnlySpace::SharedReadOnlySpace(
 SharedReadOnlySpace::SharedReadOnlySpace(Heap* heap,
                                          SingleCopyReadOnlyArtifacts* artifacts)
     : SharedReadOnlySpace(heap) {
-  // This constructor should only be used when RO_SPACE is shared without
-  // pointer compression in a per-Isolate cage.
+  // This constructor should only be used when RO_SPACE is shared and either
+  // pointer compression is off, or there is only ever one compressed pointer
+  // cage.
   DCHECK(V8_SHARED_RO_HEAP_BOOL);
-  DCHECK(!COMPRESS_POINTERS_IN_ISOLATE_CAGE_BOOL);
+  DCHECK(!COMPRESS_POINTERS_IN_MULTIPLE_CAGES_BOOL);
   accounting_stats_ = artifacts->accounting_stats();
   pages_ = artifacts->pages();
 }
@@ -752,9 +756,15 @@ size_t ReadOnlySpace::AllocateNextPage() {
 }
 
 size_t ReadOnlySpace::AllocateNextPageAt(Address pos) {
+  CHECK(IsAligned(pos, kRegularPageSize));
   ReadOnlyPageMetadata* page =
       heap_->memory_allocator()->AllocateReadOnlyPage(this, pos);
-  // If this fails we probably allocated r/o space too late.
+  if (!page) {
+    heap_->FatalProcessOutOfMemory("ReadOnly allocation failure");
+  }
+  // If this fails we got a wrong page. This means something allocated a page in
+  // the shared cage before us, stealing our required page (i.e.,
+  // ReadOnlyHeap::SetUp was called too late).
   CHECK_EQ(pos, page->ChunkAddress());
   capacity_ += AreaSize();
   AccountCommitted(page->size());

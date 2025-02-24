@@ -369,7 +369,7 @@ void GCProfiler::New(const FunctionCallbackInfo<Value>& args) {
 void GCProfiler::Start(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   GCProfiler* profiler;
-  ASSIGN_OR_RETURN_UNWRAP(&profiler, args.Holder());
+  ASSIGN_OR_RETURN_UNWRAP(&profiler, args.This());
   if (profiler->state != GCProfiler::GCProfilerState::kInitialized) {
     return;
   }
@@ -394,7 +394,7 @@ void GCProfiler::Start(const FunctionCallbackInfo<Value>& args) {
 void GCProfiler::Stop(const FunctionCallbackInfo<v8::Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   GCProfiler* profiler;
-  ASSIGN_OR_RETURN_UNWRAP(&profiler, args.Holder());
+  ASSIGN_OR_RETURN_UNWRAP(&profiler, args.This());
   if (profiler->state != GCProfiler::GCProfilerState::kStarted) {
     return;
   }
@@ -409,11 +409,10 @@ void GCProfiler::Stop(const FunctionCallbackInfo<v8::Value>& args) {
   profiler->writer()->json_end();
   profiler->state = GCProfiler::GCProfilerState::kStopped;
   auto string = profiler->out_stream()->str();
-  args.GetReturnValue().Set(String::NewFromUtf8(env->isolate(),
-                                                string.data(),
-                                                v8::NewStringType::kNormal,
-                                                string.size())
-                                .ToLocalChecked());
+  Local<Value> ret;
+  if (ToV8Value(env->context(), string, env->isolate()).ToLocal(&ret)) {
+    args.GetReturnValue().Set(ret);
+  }
 }
 
 void Initialize(Local<Object> target,

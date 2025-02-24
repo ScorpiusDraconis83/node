@@ -9,6 +9,7 @@
 #include "node_external_reference.h"
 #include "node_internals.h"
 #include "node_process-inl.h"
+#include "path.h"
 #include "util-inl.h"
 #include "uv.h"
 #include "v8-fast-api-calls.h"
@@ -72,7 +73,7 @@ static void Abort(const FunctionCallbackInfo<Value>& args) {
 // For internal testing only, not exposed to userland.
 static void CauseSegfault(const FunctionCallbackInfo<Value>& args) {
   // This should crash hard all platforms.
-  volatile void** d = static_cast<volatile void**>(nullptr);
+  void* volatile* d = static_cast<void* volatile*>(nullptr);
   *d = nullptr;
 }
 
@@ -83,6 +84,8 @@ static void Chdir(const FunctionCallbackInfo<Value>& args) {
   CHECK_EQ(args.Length(), 1);
   CHECK(args[0]->IsString());
   Utf8Value path(env->isolate(), args[0]);
+  THROW_IF_INSUFFICIENT_PERMISSIONS(
+      env, permission::PermissionScope::kFileSystemRead, path.ToStringView());
   int err = uv_chdir(*path);
   if (err) {
     // Also include the original working directory, since that will usually
@@ -127,20 +130,44 @@ static void CPUUsage(const FunctionCallbackInfo<Value>& args) {
   fields[1] = MICROS_PER_SEC * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
 }
 
+// ThreadCPUUsage use libuv's uv_getrusage_thread() this-thread resource usage
+// accessor, to access ru_utime (user CPU time used) and ru_stime
+// (system CPU time used), which are uv_timeval_t structs
+// (long tv_sec, long tv_usec).
+// Returns those values as Float64 microseconds in the elements of the array
+// passed to the function.
+static void ThreadCPUUsage(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  uv_rusage_t rusage;
+
+  // Call libuv to get the values we'll return.
+  int err = uv_getrusage_thread(&rusage);
+  if (err) return env->ThrowUVException(err, "uv_getrusage_thread");
+
+  // Get the double array pointer from the Float64Array argument.
+  Local<ArrayBuffer> ab = get_fields_array_buffer(args, 0, 2);
+  double* fields = static_cast<double*>(ab->Data());
+
+  // Set the Float64Array elements to be user / system values in microseconds.
+  fields[0] = MICROS_PER_SEC * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
+  fields[1] = MICROS_PER_SEC * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
+}
+
 static void Cwd(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   CHECK(env->has_run_bootstrapping_code());
   char buf[PATH_MAX_BYTES];
   size_t cwd_len = sizeof(buf);
   int err = uv_cwd(buf, &cwd_len);
-  if (err)
+  if (err) {
     return env->ThrowUVException(err, "uv_cwd");
+  }
 
-  Local<String> cwd = String::NewFromUtf8(env->isolate(),
-                                          buf,
-                                          NewStringType::kNormal,
-                                          cwd_len).ToLocalChecked();
-  args.GetReturnValue().Set(cwd);
+  Local<String> cwd;
+  if (String::NewFromUtf8(env->isolate(), buf, NewStringType::kNormal, cwd_len)
+          .ToLocal(&cwd)) {
+    args.GetReturnValue().Set(cwd);
+  }
 }
 
 static void Kill(const FunctionCallbackInfo<Value>& args) {
@@ -309,12 +336,12 @@ static void GetActiveResourcesInfo(const FunctionCallbackInfo<Value>& args) {
   // Active timeouts
   resources_info.insert(resources_info.end(),
                         env->timeout_info()[0],
-                        OneByteString(env->isolate(), "Timeout"));
+                        FIXED_ONE_BYTE_STRING(env->isolate(), "Timeout"));
 
   // Active immediates
   resources_info.insert(resources_info.end(),
                         env->immediate_info()->ref_count(),
-                        OneByteString(env->isolate(), "Immediate"));
+                        FIXED_ONE_BYTE_STRING(env->isolate(), "Immediate"));
 
   args.GetReturnValue().Set(
       Array::New(env->isolate(), resources_info.data(), resources_info.size()));
@@ -472,7 +499,8 @@ static void LoadEnvFile(const v8::FunctionCallbackInfo<v8::Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   std::string path = ".env";
   if (args.Length() == 1) {
-    Utf8Value path_value(args.GetIsolate(), args[0]);
+    BufferValue path_value(args.GetIsolate(), args[0]);
+    ToNamespacedPath(env, &path_value);
     path = path_value.ToString();
   }
 
@@ -584,11 +612,11 @@ void BindingData::BigIntImpl(BindingData* receiver) {
 }
 
 void BindingData::SlowBigInt(const FunctionCallbackInfo<Value>& args) {
-  BigIntImpl(FromJSObject<BindingData>(args.Holder()));
+  BigIntImpl(FromJSObject<BindingData>(args.This()));
 }
 
 void BindingData::SlowNumber(const v8::FunctionCallbackInfo<v8::Value>& args) {
-  NumberImpl(FromJSObject<BindingData>(args.Holder()));
+  NumberImpl(FromJSObject<BindingData>(args.This()));
 }
 
 bool BindingData::PrepareForSerialization(Local<Context> context,
@@ -646,6 +674,7 @@ static void CreatePerIsolateProperties(IsolateData* isolate_data,
   SetMethod(isolate, target, "availableMemory", GetAvailableMemory);
   SetMethod(isolate, target, "rss", Rss);
   SetMethod(isolate, target, "cpuUsage", CPUUsage);
+  SetMethod(isolate, target, "threadCpuUsage", ThreadCPUUsage);
   SetMethod(isolate, target, "resourceUsage", ResourceUsage);
 
   SetMethod(isolate, target, "_debugEnd", DebugEnd);
@@ -690,6 +719,7 @@ void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(GetAvailableMemory);
   registry->Register(Rss);
   registry->Register(CPUUsage);
+  registry->Register(ThreadCPUUsage);
   registry->Register(ResourceUsage);
 
   registry->Register(GetActiveRequests);

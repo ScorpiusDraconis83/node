@@ -8,6 +8,7 @@
 #include "node_errors.h"
 #include "node_external_reference.h"
 #include "node_file.h"
+#include "path.h"
 #include "permission/permission.h"
 #include "util.h"
 #include "v8.h"
@@ -29,8 +30,10 @@ using v8::HandleScope;
 using v8::Int32;
 using v8::Isolate;
 using v8::Local;
+using v8::NewStringType;
 using v8::Object;
 using v8::ObjectTemplate;
+using v8::SnapshotCreator;
 using v8::String;
 using v8::Uint32;
 using v8::Undefined;
@@ -57,7 +60,7 @@ void Concat(const FunctionCallbackInfo<Value>& args) {
   std::vector<View> views;
   size_t total = 0;
 
-  std::vector<v8::Global<Value>> buffers;
+  std::vector<Global<Value>> buffers;
   if (FromV8Array(context, array, &buffers).IsNothing()) {
     return;
   }
@@ -96,27 +99,25 @@ void BlobFromFilePath(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   BufferValue path(env->isolate(), args[0]);
   CHECK_NOT_NULL(*path);
+  ToNamespacedPath(env, &path);
   THROW_IF_INSUFFICIENT_PERMISSIONS(
       env, permission::PermissionScope::kFileSystemRead, path.ToStringView());
   auto entry = DataQueue::CreateFdEntry(env, args[0]);
   if (entry == nullptr) {
-    return THROW_ERR_INVALID_ARG_VALUE(env, "Unabled to open file as blob");
+    return THROW_ERR_INVALID_ARG_VALUE(env, "Unable to open file as blob");
   }
 
   std::vector<std::unique_ptr<DataQueue::Entry>> entries;
   entries.push_back(std::move(entry));
 
-  auto blob =
-      Blob::Create(env, DataQueue::CreateIdempotent(std::move(entries)));
-
-  if (blob) {
-    auto array = Array::New(env->isolate(), 2);
-    USE(array->Set(env->context(), 0, blob->object()));
-    USE(array->Set(env->context(),
-                   1,
-                   Uint32::NewFromUnsigned(env->isolate(), blob->length())));
-
-    args.GetReturnValue().Set(array);
+  if (auto blob =
+          Blob::Create(env, DataQueue::CreateIdempotent(std::move(entries)))) {
+    Local<Value> vals[2]{
+        blob->object(),
+        Uint32::NewFromUnsigned(env->isolate(), blob->length()),
+    };
+    args.GetReturnValue().Set(
+        Array::New(env->isolate(), &vals[0], arraysize(vals)));
   }
 }
 }  // namespace
@@ -157,7 +158,7 @@ Local<FunctionTemplate> Blob::GetConstructorTemplate(Environment* env) {
   return tmpl;
 }
 
-bool Blob::HasInstance(Environment* env, v8::Local<v8::Value> object) {
+bool Blob::HasInstance(Environment* env, Local<Value> object) {
   return GetConstructorTemplate(env)->HasInstance(object);
 }
 
@@ -186,7 +187,7 @@ void Blob::New(const FunctionCallbackInfo<Value>& args) {
   Local<Array> array = args[0].As<Array>();
   std::vector<std::unique_ptr<DataQueue::Entry>> entries(array->Length());
 
-  std::vector<v8::Global<Value>> sources;
+  std::vector<Global<Value>> sources;
   if (FromV8Array(context, array, &sources).IsNothing()) {
     return;
   }
@@ -195,14 +196,18 @@ void Blob::New(const FunctionCallbackInfo<Value>& args) {
   for (size_t i = 0; i < count; i++) {
     Local<Value> entry = sources[i].Get(isolate);
 
-    const auto entryFromArrayBuffer = [isolate](v8::Local<v8::ArrayBuffer> buf,
-                                                size_t byte_length,
-                                                size_t byte_offset = 0) {
+    auto entryFromArrayBuffer =
+        [isolate](Local<ArrayBuffer> buf,
+                  size_t byte_length,
+                  size_t byte_offset =
+                      0) mutable -> std::unique_ptr<DataQueue::Entry> {
       if (buf->IsDetachable()) {
         std::shared_ptr<BackingStore> store = buf->GetBackingStore();
-        USE(buf->Detach(Local<Value>()));
+        if (buf->Detach(Local<Value>()).IsNothing()) {
+          return nullptr;
+        }
         return DataQueue::CreateInMemoryEntryFromBackingStore(
-            store, byte_offset, byte_length);
+            std::move(store), byte_offset, byte_length);
       }
 
       // If the ArrayBuffer is not detachable, we will copy from it instead.
@@ -211,7 +216,7 @@ void Blob::New(const FunctionCallbackInfo<Value>& args) {
       uint8_t* ptr = static_cast<uint8_t*>(buf->Data()) + byte_offset;
       std::copy(ptr, ptr + byte_length, static_cast<uint8_t*>(store->Data()));
       return DataQueue::CreateInMemoryEntryFromBackingStore(
-          store, 0, byte_length);
+          std::move(store), 0, byte_length);
     };
 
     // Every entry should be either an ArrayBuffer, ArrayBufferView, or Blob.
@@ -225,11 +230,15 @@ void Blob::New(const FunctionCallbackInfo<Value>& args) {
     // ensuring appropriate spec compliance.
     if (entry->IsArrayBuffer()) {
       Local<ArrayBuffer> buf = entry.As<ArrayBuffer>();
-      entries[i] = entryFromArrayBuffer(buf, buf->ByteLength());
+      auto ret = entryFromArrayBuffer(buf, buf->ByteLength());
+      if (!ret) return;
+      entries[i] = std::move(ret);
     } else if (entry->IsArrayBufferView()) {
       Local<ArrayBufferView> view = entry.As<ArrayBufferView>();
-      entries[i] = entryFromArrayBuffer(
+      auto ret = entryFromArrayBuffer(
           view->Buffer(), view->ByteLength(), view->ByteOffset());
+      if (!ret) return;
+      entries[i] = std::move(ret);
     } else if (Blob::HasInstance(env, entry)) {
       Blob* blob;
       ASSIGN_OR_RETURN_UNWRAP(&blob, entry);
@@ -247,7 +256,7 @@ void Blob::New(const FunctionCallbackInfo<Value>& args) {
 void Blob::GetReader(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   Blob* blob;
-  ASSIGN_OR_RETURN_UNWRAP(&blob, args.Holder());
+  ASSIGN_OR_RETURN_UNWRAP(&blob, args.This());
 
   BaseObjectPtr<Blob::Reader> reader =
       Blob::Reader::Create(env, BaseObjectPtr<Blob>(blob));
@@ -257,7 +266,7 @@ void Blob::GetReader(const FunctionCallbackInfo<Value>& args) {
 void Blob::ToSlice(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   Blob* blob;
-  ASSIGN_OR_RETURN_UNWRAP(&blob, args.Holder());
+  ASSIGN_OR_RETURN_UNWRAP(&blob, args.This());
   CHECK(args[0]->IsUint32());
   CHECK(args[1]->IsUint32());
   size_t start = args[0].As<Uint32>()->Value();
@@ -277,14 +286,14 @@ BaseObjectPtr<Blob> Blob::Slice(Environment* env, size_t start, size_t end) {
 }
 
 Blob::Blob(Environment* env,
-           v8::Local<v8::Object> obj,
+           Local<Object> obj,
            std::shared_ptr<DataQueue> data_queue)
     : BaseObject(env, obj), data_queue_(data_queue) {
   MakeWeak();
 }
 
 Blob::Reader::Reader(Environment* env,
-                     v8::Local<v8::Object> obj,
+                     Local<Object> obj,
                      BaseObjectPtr<Blob> strong_ptr)
     : AsyncWrap(env, obj, AsyncWrap::PROVIDER_BLOBREADER),
       inner_(strong_ptr->data_queue_->get_reader()),
@@ -292,7 +301,7 @@ Blob::Reader::Reader(Environment* env,
   MakeWeak();
 }
 
-bool Blob::Reader::HasInstance(Environment* env, v8::Local<v8::Value> value) {
+bool Blob::Reader::HasInstance(Environment* env, Local<Value> value) {
   return GetConstructorTemplate(env)->HasInstance(value);
 }
 
@@ -326,7 +335,7 @@ BaseObjectPtr<Blob::Reader> Blob::Reader::Create(Environment* env,
 void Blob::Reader::Pull(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   Blob::Reader* reader;
-  ASSIGN_OR_RETURN_UNWRAP(&reader, args.Holder());
+  ASSIGN_OR_RETURN_UNWRAP(&reader, args.This());
 
   CHECK(args[0]->IsFunction());
   Local<Function> fn = args[0].As<Function>();
@@ -368,7 +377,7 @@ void Blob::Reader::Pull(const FunctionCallbackInfo<Value>& args) {
       for (size_t n = 0; n < count; n++) total += vecs[n].len;
 
       std::shared_ptr<BackingStore> store =
-          v8::ArrayBuffer::NewBackingStore(env->isolate(), total);
+          ArrayBuffer::NewBackingStore(env->isolate(), total);
       auto ptr = static_cast<uint8_t*>(store->Data());
       for (size_t n = 0; n < count; n++) {
         std::copy(vecs[n].base, vecs[n].base + vecs[n].len, ptr);
@@ -413,7 +422,7 @@ std::unique_ptr<worker::TransferData> Blob::CloneForMessaging() const {
   return std::make_unique<BlobTransferData>(data_queue_);
 }
 
-void Blob::StoreDataObject(const v8::FunctionCallbackInfo<v8::Value>& args) {
+void Blob::StoreDataObject(const FunctionCallbackInfo<Value>& args) {
   Realm* realm = Realm::GetCurrent(args);
 
   CHECK(args[0]->IsString());  // ID key
@@ -466,7 +475,7 @@ void Blob::RevokeObjectURL(const FunctionCallbackInfo<Value>& args) {
   }
 }
 
-void Blob::GetDataObject(const v8::FunctionCallbackInfo<v8::Value>& args) {
+void Blob::GetDataObject(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[0]->IsString());
   Realm* realm = Realm::GetCurrent(args);
   BlobBindingData* binding_data = realm->GetBindingData<BlobBindingData>();
@@ -480,7 +489,7 @@ void Blob::GetDataObject(const v8::FunctionCallbackInfo<v8::Value>& args) {
     Local<Value> type;
     if (!String::NewFromUtf8(isolate,
                              stored.type.c_str(),
-                             v8::NewStringType::kNormal,
+                             NewStringType::kNormal,
                              static_cast<int>(stored.type.length()))
              .ToLocal(&type)) {
       return;
@@ -552,7 +561,7 @@ void BlobBindingData::Deserialize(Local<Context> context,
 }
 
 bool BlobBindingData::PrepareForSerialization(Local<Context> context,
-                                              v8::SnapshotCreator* creator) {
+                                              SnapshotCreator* creator) {
   // Stored blob objects are not actually persisted.
   // Return true because we need to maintain the reference to the binding from
   // JS land.

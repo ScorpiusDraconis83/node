@@ -130,6 +130,11 @@ class V8_EXPORT ModuleRequest : public Data {
   Local<String> GetSpecifier() const;
 
   /**
+   * Returns the module import phase for this ModuleRequest.
+   */
+  ModuleImportPhase GetPhase() const;
+
+  /**
    * Returns the source code offset of this module request.
    * Use Module::SourceOffsetToLocation to convert this to line/column numbers.
    */
@@ -210,7 +215,10 @@ class V8_EXPORT Module : public Data {
 
   using ResolveModuleCallback = MaybeLocal<Module> (*)(
       Local<Context> context, Local<String> specifier,
-      Local<FixedArray> import_assertions, Local<Module> referrer);
+      Local<FixedArray> import_attributes, Local<Module> referrer);
+  using ResolveSourceCallback = MaybeLocal<Object> (*)(
+      Local<Context> context, Local<String> specifier,
+      Local<FixedArray> import_attributes, Local<Module> referrer);
 
   /**
    * Instantiates the module and its dependencies.
@@ -220,7 +228,8 @@ class V8_EXPORT Module : public Data {
    * exception is propagated.)
    */
   V8_WARN_UNUSED_RESULT Maybe<bool> InstantiateModule(
-      Local<Context> context, ResolveModuleCallback callback);
+      Local<Context> context, ResolveModuleCallback module_callback,
+      ResolveSourceCallback source_callback = nullptr);
 
   /**
    * Evaluates the module and its dependencies.
@@ -322,6 +331,14 @@ class V8_EXPORT Module : public Data {
   static void CheckCast(Data* obj);
 };
 
+class V8_EXPORT CompileHintsCollector : public Data {
+ public:
+  /**
+   * Returns the positions of lazy functions which were compiled and executed.
+   */
+  std::vector<int> GetCompileHints(Isolate* isolate) const;
+};
+
 /**
  * A compiled JavaScript script, tied to a Context which was active when the
  * script was compiled.
@@ -359,7 +376,15 @@ class V8_EXPORT Script : public Data {
    * If the script was compiled, returns the positions of lazy functions which
    * were eventually compiled and executed.
    */
+  V8_DEPRECATE_SOON("Use GetCompileHintsCollector instead")
   std::vector<int> GetProducedCompileHints() const;
+
+  /**
+   * Get a compile hints collector object which we can use later for retrieving
+   * compile hints (= positions of lazy functions which were compiled and
+   * executed).
+   */
+  Local<CompileHintsCollector> GetCompileHintsCollector() const;
 };
 
 enum class ScriptType { kClassic, kModule };
@@ -640,11 +665,32 @@ class V8_EXPORT ScriptCompiler {
 
   enum CompileOptions {
     kNoCompileOptions = 0,
-    kConsumeCodeCache,
-    kEagerCompile,
-    kProduceCompileHints,
-    kConsumeCompileHints
+    kConsumeCodeCache = 1 << 0,
+    kEagerCompile = 1 << 1,
+    kProduceCompileHints = 1 << 2,
+    kConsumeCompileHints = 1 << 3,
+    kFollowCompileHintsMagicComment = 1 << 4,
   };
+
+  static inline bool CompileOptionsIsValid(CompileOptions compile_options) {
+    // kConsumeCodeCache is mutually exclusive with all other flag bits.
+    if ((compile_options & kConsumeCodeCache) &&
+        compile_options != kConsumeCodeCache) {
+      return false;
+    }
+    // kEagerCompile is mutually exclusive with all other flag bits.
+    if ((compile_options & kEagerCompile) && compile_options != kEagerCompile) {
+      return false;
+    }
+    // We don't currently support producing and consuming compile hints at the
+    // same time.
+    constexpr int produce_and_consume = CompileOptions::kProduceCompileHints |
+                                        CompileOptions::kConsumeCompileHints;
+    if ((compile_options & produce_and_consume) == produce_and_consume) {
+      return false;
+    }
+    return true;
+  }
 
   /**
    * The reason for which we are not requesting or providing a code cache.
@@ -722,6 +768,8 @@ class V8_EXPORT ScriptCompiler {
 
   static ConsumeCodeCacheTask* StartConsumingCodeCache(
       Isolate* isolate, std::unique_ptr<CachedData> source);
+  static ConsumeCodeCacheTask* StartConsumingCodeCacheOnBackground(
+      Isolate* isolate, std::unique_ptr<CachedData> source);
 
   /**
    * Compiles a streamed script (bound to current context).
@@ -787,15 +835,6 @@ class V8_EXPORT ScriptCompiler {
    * It is possible to specify multiple context extensions (obj in the above
    * example).
    */
-  V8_DEPRECATED("Use CompileFunction")
-  static V8_WARN_UNUSED_RESULT MaybeLocal<Function> CompileFunctionInContext(
-      Local<Context> context, Source* source, size_t arguments_count,
-      Local<String> arguments[], size_t context_extension_count,
-      Local<Object> context_extensions[],
-      CompileOptions options = kNoCompileOptions,
-      NoCacheReason no_cache_reason = kNoCacheNoReason,
-      Local<ScriptOrModule>* script_or_module_out = nullptr);
-
   static V8_WARN_UNUSED_RESULT MaybeLocal<Function> CompileFunction(
       Local<Context> context, Source* source, size_t arguments_count = 0,
       Local<String> arguments[] = nullptr, size_t context_extension_count = 0,

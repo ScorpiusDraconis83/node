@@ -16,7 +16,6 @@ namespace internal {
 AllocationResult MainAllocator::AllocateRaw(int size_in_bytes,
                                             AllocationAlignment alignment,
                                             AllocationOrigin origin) {
-  DCHECK(!v8_flags.enable_third_party_heap);
   size_in_bytes = ALIGN_TO_ALLOCATION_ALIGNMENT(size_in_bytes);
 
   DCHECK_EQ(in_gc(), origin == AllocationOrigin::kGC);
@@ -50,6 +49,9 @@ AllocationResult MainAllocator::AllocateFastUnaligned(int size_in_bytes,
 
   MSAN_ALLOCATED_UNINITIALIZED_MEMORY(obj.address(), size_in_bytes);
 
+  DCHECK_IMPLIES(black_allocation_ == BlackAllocation::kAlwaysEnabled,
+                 space_heap()->marking_state()->IsMarked(obj));
+
   return AllocationResult::FromObject(obj);
 }
 
@@ -73,6 +75,9 @@ AllocationResult MainAllocator::AllocateFastAligned(
   }
 
   MSAN_ALLOCATED_UNINITIALIZED_MEMORY(obj.address(), size_in_bytes);
+
+  DCHECK_IMPLIES(black_allocation_ == BlackAllocation::kAlwaysEnabled,
+                 space_heap()->marking_state()->IsMarked(obj));
 
   return AllocationResult::FromObject(obj);
 }

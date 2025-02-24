@@ -267,10 +267,8 @@ added: v16.11.0
   * `start` {integer}
   * `end` {integer} **Default:** `Infinity`
   * `highWaterMark` {integer} **Default:** `64 * 1024`
+  * `signal` {AbortSignal|undefined} **Default:** `undefined`
 * Returns: {fs.ReadStream}
-
-Unlike the 16 KiB default `highWaterMark` for a {stream.Readable}, the stream
-returned by this method has a default `highWaterMark` of 64 KiB.
 
 `options` can include `start` and `end` values to read a range of bytes from
 the file instead of the entire file. Both `start` and `end` are inclusive and
@@ -479,11 +477,14 @@ Reads data from the file and stores that in the given buffer.
 If the file is not modified concurrently, the end-of-file is reached when the
 number of bytes read is zero.
 
-#### `filehandle.readableWebStream([options])`
+#### `filehandle.readableWebStream()`
 
 <!-- YAML
 added: v17.0.0
 changes:
+  - version: v23.8.0
+    pr-url: https://github.com/nodejs/node/pull/55461
+    description: Removed option to create a 'bytes' stream. Streams are now always 'bytes' streams.
   - version:
     - v20.0.0
     - v18.17.0
@@ -493,13 +494,10 @@ changes:
 
 > Stability: 1 - Experimental
 
-* `options` {Object}
-  * `type` {string|undefined} Whether to open a normal or a `'bytes'` stream.
-    **Default:** `undefined`
-
 * Returns: {ReadableStream}
 
-Returns a `ReadableStream` that may be used to read the files data.
+Returns a byte-oriented `ReadableStream` that may be used to read the file's
+contents.
 
 An error will be thrown if this method is called more than once or is called
 after the `FileHandle` is closed or closing.
@@ -807,6 +805,7 @@ changes:
 * `options` {Object|string}
   * `encoding` {string|null} The expected character encoding when `data` is a
     string. **Default:** `'utf8'`
+  * `signal` {AbortSignal|undefined} allows aborting an in-progress writeFile. **Default:** `undefined`
 * Returns: {Promise}
 
 Asynchronously writes data to a file, replacing the file if it already exists.
@@ -1021,6 +1020,9 @@ try {
 <!-- YAML
 added: v16.7.0
 changes:
+  - version: v22.3.0
+    pr-url: https://github.com/nodejs/node/pull/53127
+    description: This API is no longer experimental.
   - version:
     - v20.1.0
     - v18.17.0
@@ -1035,8 +1037,6 @@ changes:
                  whether to perform path resolution for symlinks.
 -->
 
-> Stability: 1 - Experimental
-
 * `src` {string|URL} source path to copy.
 * `dest` {string|URL} destination path to copy to.
 * `options` {Object}
@@ -1049,7 +1049,8 @@ changes:
     that resolves to `true` or `false` **Default:** `undefined`.
     * `src` {string} source path to copy.
     * `dest` {string} destination path to copy to.
-    * Returns: {boolean|Promise}
+    * Returns: {boolean|Promise} A value that is coercible to `boolean` or
+      a `Promise` that fulfils with such value.
   * `force` {boolean} overwrite existing file or directory. The copy
     operation will ignore errors if you set this to false and the destination
     exists. Use the `errorOnExist` option to change this behavior.
@@ -1073,6 +1074,15 @@ behavior is similar to `cp dir1/ dir2/`.
 
 <!-- YAML
 added: v22.0.0
+changes:
+  - version:
+    - v23.7.0
+    - v22.14.0
+    pr-url: https://github.com/nodejs/node/pull/56489
+    description: Add support for `exclude` option to accept glob patterns.
+  - version: v22.2.0
+    pr-url: https://github.com/nodejs/node/pull/52837
+    description: Add support for `withFileTypes` as an option.
 -->
 
 > Stability: 1 - Experimental
@@ -1080,8 +1090,11 @@ added: v22.0.0
 * `pattern` {string|string\[]}
 * `options` {Object}
   * `cwd` {string} current working directory. **Default:** `process.cwd()`
-  * `exclude` {Function} Function to filter out files/directories. Return
+  * `exclude` {Function|string\[]} Function to filter out files/directories or a
+    list of glob patterns to be excluded. If a function is provided, return
     `true` to exclude the item, `false` to include it. **Default:** `undefined`.
+  * `withFileTypes` {boolean} `true` if the glob should return paths as Dirents,
+    `false` otherwise. **Default:** `false`.
 * Returns: {AsyncIterator} An AsyncIterator that yields the paths of files
   that match the pattern.
 
@@ -1693,7 +1706,7 @@ changes:
 Creates a symbolic link.
 
 The `type` argument is only used on Windows platforms and can be one of `'dir'`,
-`'file'`, or `'junction'`. If the `type` argument is not a string, Node.js will
+`'file'`, or `'junction'`. If the `type` argument is `null`, Node.js will
 autodetect `target` type and use `'file'` or `'dir'`. If the `target` does not
 exist, `'file'` will be used. Windows junction points require the destination
 path to be absolute. When using `'junction'`, the `target` argument will
@@ -1914,6 +1927,10 @@ concurrent modifications on the same file or data corruption may occur.
 <!-- YAML
 added: v0.11.15
 changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/55862
+    description: The constants `fs.F_OK`, `fs.R_OK`, `fs.W_OK` and `fs.X_OK`
+                 which were present directly on `fs` are removed.
   - version: v20.8.0
     pr-url: https://github.com/nodejs/node/pull/49683
     description: The constants `fs.F_OK`, `fs.R_OK`, `fs.W_OK` and `fs.X_OK`
@@ -2381,6 +2398,7 @@ changes:
 * `dest` {string|Buffer|URL} destination filename of the copy operation
 * `mode` {integer} modifiers for copy operation. **Default:** `0`.
 * `callback` {Function}
+  * `err` {Error}
 
 Asynchronously copies `src` to `dest`. By default, `dest` is overwritten if it
 already exists. No arguments other than a possible exception are given to the
@@ -2422,6 +2440,9 @@ copyFile('source.txt', 'destination.txt', constants.COPYFILE_EXCL, callback);
 <!-- YAML
 added: v16.7.0
 changes:
+  - version: v22.3.0
+    pr-url: https://github.com/nodejs/node/pull/53127
+    description: This API is no longer experimental.
   - version:
     - v20.1.0
     - v18.17.0
@@ -2441,8 +2462,6 @@ changes:
                  whether to perform path resolution for symlinks.
 -->
 
-> Stability: 1 - Experimental
-
 * `src` {string|URL} source path to copy.
 * `dest` {string|URL} destination path to copy to.
 * `options` {Object}
@@ -2455,7 +2474,8 @@ changes:
     that resolves to `true` or `false` **Default:** `undefined`.
     * `src` {string} source path to copy.
     * `dest` {string} destination path to copy to.
-    * Returns: {boolean|Promise}
+    * Returns: {boolean|Promise} A value that is coercible to `boolean` or
+      a `Promise` that fulfils with such value.
   * `force` {boolean} overwrite existing file or directory. The copy
     operation will ignore errors if you set this to false and the destination
     exists. Use the `errorOnExist` option to change this behavior.
@@ -2468,6 +2488,7 @@ changes:
   * `verbatimSymlinks` {boolean} When `true`, path resolution for symlinks will
     be skipped. **Default:** `false`
 * `callback` {Function}
+  * `err` {Error}
 
 Asynchronously copies the entire directory structure from `src` to `dest`,
 including subdirectories and files.
@@ -2537,9 +2558,6 @@ changes:
   * `fs` {Object|null} **Default:** `null`
   * `signal` {AbortSignal|null} **Default:** `null`
 * Returns: {fs.ReadStream}
-
-Unlike the 16 KiB default `highWaterMark` for a {stream.Readable}, the stream
-returned by this method has a default `highWaterMark` of 64 KiB.
 
 `options` can include `start` and `end` values to read a range of bytes from
 the file instead of the entire file. Both `start` and `end` are inclusive and
@@ -2724,7 +2742,7 @@ changes:
 * `callback` {Function}
   * `exists` {boolean}
 
-Test whether or not the given path exists by checking with the file system.
+Test whether or not the element at the given `path` exists by checking with the file system.
 Then call the `callback` argument with either true or false:
 
 ```mjs
@@ -2740,6 +2758,9 @@ callbacks.** Normally, the first parameter to a Node.js callback is an `err`
 parameter, optionally followed by other parameters. The `fs.exists()` callback
 has only one boolean parameter. This is one reason `fs.access()` is recommended
 instead of `fs.exists()`.
+
+If `path` is a symbolic link, it is followed. Thus, if `path` exists but points
+to a non-existent element, the callback will receive the value `false`.
 
 Using `fs.exists()` to check for the existence of a file before calling
 `fs.open()`, `fs.readFile()`, or `fs.writeFile()` is not recommended. Doing
@@ -3109,6 +3130,15 @@ descriptor. See [`fs.utimes()`][].
 
 <!-- YAML
 added: v22.0.0
+changes:
+  - version:
+    - v23.7.0
+    - v22.14.0
+    pr-url: https://github.com/nodejs/node/pull/56489
+    description: Add support for `exclude` option to accept glob patterns.
+  - version: v22.2.0
+    pr-url: https://github.com/nodejs/node/pull/52837
+    description: Add support for `withFileTypes` as an option.
 -->
 
 > Stability: 1 - Experimental
@@ -3117,8 +3147,11 @@ added: v22.0.0
 
 * `options` {Object}
   * `cwd` {string} current working directory. **Default:** `process.cwd()`
-  * `exclude` {Function} Function to filter out files/directories. Return
+  * `exclude` {Function|string\[]} Function to filter out files/directories or a
+    list of glob patterns to be excluded. If a function is provided, return
     `true` to exclude the item, `false` to include it. **Default:** `undefined`.
+  * `withFileTypes` {boolean} `true` if the glob should return paths as Dirents,
+    `false` otherwise. **Default:** `false`.
 
 * `callback` {Function}
   * `err` {Error}
@@ -3669,6 +3702,37 @@ number of bytes read is zero.
 If this method is invoked as its [`util.promisify()`][]ed version, it returns
 a promise for an `Object` with `bytesRead` and `buffer` properties.
 
+The `fs.read()` method reads data from the file specified
+by the file descriptor (`fd`).
+The `length` argument indicates the maximum number
+of bytes that Node.js
+will attempt to read from the kernel.
+However, the actual number of bytes read (`bytesRead`) can be lower
+than the specified `length` for various reasons.
+
+For example:
+
+* If the file is shorter than the specified `length`, `bytesRead`
+  will be set to the actual number of bytes read.
+* If the file encounters EOF (End of File) before the buffer could
+  be filled, Node.js will read all available bytes until EOF is encountered,
+  and the `bytesRead` parameter in the callback will indicate
+  the actual number of bytes read, which may be less than the specified `length`.
+* If the file is on a slow network `filesystem`
+  or encounters any other issue during reading,
+  `bytesRead` can be lower than the specified `length`.
+
+Therefore, when using `fs.read()`, it's important to
+check the `bytesRead` value to
+determine how many bytes were actually read from the file.
+Depending on your application
+logic, you may need to handle cases where `bytesRead`
+is lower than the specified `length`,
+such as by wrapping the read call in a loop if you require
+a minimum amount of bytes.
+
+This behavior is similar to the POSIX `preadv2` function.
+
 ### `fs.read(fd[, options], callback)`
 
 <!-- YAML
@@ -4072,6 +4136,9 @@ the path returned will be passed as a {Buffer} object.
 If `path` resolves to a socket or a pipe, the function will return a system
 dependent name for that object.
 
+A path that does not exist results in an ENOENT error.
+`error.path` is the absolute file path.
+
 ### `fs.realpath.native(path[, options], callback)`
 
 <!-- YAML
@@ -4444,7 +4511,7 @@ See the POSIX symlink(2) documentation for more details.
 
 The `type` argument is only available on Windows and ignored on other platforms.
 It can be set to `'dir'`, `'file'`, or `'junction'`. If the `type` argument is
-not a string, Node.js will autodetect `target` type and use `'file'` or `'dir'`.
+`null`, Node.js will autodetect `target` type and use `'file'` or `'dir'`.
 If the `target` does not exist, `'file'` will be used. Windows junction points
 require the destination path to be absolute. When using `'junction'`, the
 `target` argument will automatically be normalized to absolute path. Junction
@@ -5420,6 +5487,9 @@ copyFileSync('source.txt', 'destination.txt', constants.COPYFILE_EXCL);
 <!-- YAML
 added: v16.7.0
 changes:
+  - version: v22.3.0
+    pr-url: https://github.com/nodejs/node/pull/53127
+    description: This API is no longer experimental.
   - version:
     - v20.1.0
     - v18.17.0
@@ -5434,8 +5504,6 @@ changes:
                  whether to perform path resolution for symlinks.
 -->
 
-> Stability: 1 - Experimental
-
 * `src` {string|URL} source path to copy.
 * `dest` {string|URL} destination path to copy to.
 * `options` {Object}
@@ -5447,7 +5515,8 @@ changes:
     all of its contents will be skipped as well. **Default:** `undefined`
     * `src` {string} source path to copy.
     * `dest` {string} destination path to copy to.
-    * Returns: {boolean}
+    * Returns: {boolean} Any non-`Promise` value that is coercible
+      to `boolean`.
   * `force` {boolean} overwrite existing file or directory. The copy
     operation will ignore errors if you set this to false and the destination
     exists. Use the `errorOnExist` option to change this behavior.
@@ -5603,6 +5672,15 @@ Synchronous version of [`fs.futimes()`][]. Returns `undefined`.
 
 <!-- YAML
 added: v22.0.0
+changes:
+  - version:
+    - v23.7.0
+    - v22.14.0
+    pr-url: https://github.com/nodejs/node/pull/56489
+    description: Add support for `exclude` option to accept glob patterns.
+  - version: v22.2.0
+    pr-url: https://github.com/nodejs/node/pull/52837
+    description: Add support for `withFileTypes` as an option.
 -->
 
 > Stability: 1 - Experimental
@@ -5610,8 +5688,11 @@ added: v22.0.0
 * `pattern` {string|string\[]}
 * `options` {Object}
   * `cwd` {string} current working directory. **Default:** `process.cwd()`
-  * `exclude` {Function} Function to filter out files/directories. Return
+  * `exclude` {Function|string\[]} Function to filter out files/directories or a
+    list of glob patterns to be excluded. If a function is provided, return
     `true` to exclude the item, `false` to include it. **Default:** `undefined`.
+  * `withFileTypes` {boolean} `true` if the glob should return paths as Dirents,
+    `false` otherwise. **Default:** `false`.
 * Returns: {string\[]} paths of files that match the pattern.
 
 ```mjs
@@ -6747,29 +6828,11 @@ added:
   - v18.20.0
 -->
 
-> Stability: 1 – Experimental
+> Stability: 1 - Experimental
 
 * {string}
 
 The path to the parent directory of the file this {fs.Dirent} object refers to.
-
-#### `dirent.path`
-
-<!-- YAML
-added:
-  - v20.1.0
-  - v18.17.0
-deprecated:
-  - v21.5.0
-  - v20.12.0
-  - v18.20.0
--->
-
-> Stability: 0 - Deprecated: Use [`dirent.parentPath`][] instead.
-
-* {string}
-
-Alias for `dirent.parentPath`.
 
 ### Class: `fs.FSWatcher`
 
@@ -7004,7 +7067,9 @@ i.e. before the `'ready'` event is emitted.
 <!-- YAML
 added: v0.1.21
 changes:
-  - version: v22.0.0
+  - version:
+    - v22.0.0
+    - v20.13.0
     pr-url: https://github.com/nodejs/node/pull/51879
     description: Public constructor is deprecated.
   - version: v8.1.0
@@ -8327,7 +8392,6 @@ the file contents.
 [`Number.MAX_SAFE_INTEGER`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number/MAX_SAFE_INTEGER
 [`ReadDirectoryChangesW`]: https://docs.microsoft.com/en-us/windows/desktop/api/winbase/nf-winbase-readdirectorychangesw
 [`UV_THREADPOOL_SIZE`]: cli.md#uv_threadpool_sizesize
-[`dirent.parentPath`]: #direntparentpath
 [`event ports`]: https://illumos.org/man/port_create
 [`filehandle.createReadStream()`]: #filehandlecreatereadstreamoptions
 [`filehandle.createWriteStream()`]: #filehandlecreatewritestreamoptions
